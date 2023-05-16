@@ -407,9 +407,9 @@ def filter_tropomi(tropomi_data, xlim, ylim, startdate, enddate):
         & (tropomi_data["latitude"] < ylim[1])
         & (tropomi_data["time"] >= startdate)
         & (tropomi_data["time"] <= enddate)
-        & (tropomi_data["qa_value"] >= 0.5)
-        & (tropomi_data["swir_albedo"] > 0.05)
-        & (tropomi_data["blended_albedo"] < 0.85)
+        & (tropomi_data["qa_value"] >= 1.0)
+        #& (tropomi_data["swir_albedo"] > 0.05)
+        #& (tropomi_data["blended_albedo"] < 0.85)
         & (tropomi_data["longitude_bounds"].ptp(axis=2) < 5)
     )
 

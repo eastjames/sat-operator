@@ -1,9 +1,12 @@
-startdate: 2019001
-enddate: 2019002
-gc_cache: '/n/holyscratch01/jacob_lab/jeast/gc-OH-runs/gc_2x25_merra2_CH4_v05OH-test/OutputDir/'
-tropomidir:  '/n/holylfs05/LABS/jacob_lab/imi/ch4/tropomi/'
+startdate: 2019364
+enddate: 2019365
+gc_cache: '/n/holyscratch01/jacob_lab/jeast/gc-OH-runs-2/gc_2x25_merra2_CH4_v05OH/OutputDir/'
+#tropomidir:  '/n/holylfs05/LABS/jacob_lab/imi/ch4/tropomi/'
+tropomidir:  '/n/holylfs05/LABS/jacob_lab/imi/ch4/blended/'
 trversion: ['020400',]
-trkind: ['RPRO',]
+#trkind: ['RPRO']
+trkind: ['BLND']
+blended: True
 datadir: '/n/holyscratch01/jacob_lab/jeast/gc-OH-runs-2/tropomi_gridded'
 outfile: 'TROPOMI_GC_XCH4_L3_RPRO_020400_%Y%m%d.nc'
 pedge_cache: '/n/holyscratch01/jacob_lab/jeast/gc-OH-runs-2/gc_2x25_merra2_CH4_v05OH/OutputDir/'
