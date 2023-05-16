@@ -15,6 +15,7 @@ from shapely.geometry import Polygon
 
 def apply_average_tropomi_operator(
     filename,
+    blended,
     n_elements,
     gc_startdate,
     gc_enddate,
@@ -29,6 +30,7 @@ def apply_average_tropomi_operator(
 
     Arguments
         filename       [str]        : TROPOMI netcdf data file to read
+        blended        [bool]       : if True, use blended TROPOMI+GOSAT data
         n_elements     [int]        : Number of state vector elements
         gc_startdate   [datetime64] : First day of inversion period, for GEOS-Chem and TROPOMI
         gc_enddate     [datetime64] : Last day of inversion period, for GEOS-Chem and TROPOMI
@@ -47,13 +49,22 @@ def apply_average_tropomi_operator(
     """
 
     # Read TROPOMI data
-    TROPOMI = read_tropomi(filename)
+    assert isinstance(blended, bool), 'blended must be type bool'
+    if blended:
+        TROPOMI = read_blended(filename)
+    else:
+        TROPOMI = read_tropomi(filename)
     if TROPOMI == None:
         print(f"Skipping {filename} due to file processing issue.")
         return TROPOMI
 
     # We're only going to consider data within lat/lon/time bounds, with QA > 0.5, and with safe surface albedo values
-    sat_ind = filter_tropomi(TROPOMI, xlim, ylim, gc_startdate, gc_enddate)
+    if blended:
+        # Only going to consider data within lat/lon/time bounds and without problematic coastal pixels
+        sat_ind = filter_blended(TROPOMI, xlim, ylim, gc_startdate, gc_enddate)
+    else:
+        # Only going to consider data within lat/lon/time bounds, with QA > 0.5, and with safe surface albedo values
+        sat_ind = filter_tropomi(TROPOMI, xlim, ylim, gc_startdate, gc_enddate)
 
     # get the lat/lons of gc gridcells
     gc_lat_lon = get_gc_lat_lon(gc_cache, gc_startdate)
@@ -231,7 +242,6 @@ def read_tropomi(filename):
                             - Latitude
                             - Longitude
                             - QA value
-                            - UTC time
                             - Time (utc time reshaped for orbit)
                             - Averaging kernel
                             - SWIR albedo
@@ -249,88 +259,134 @@ def read_tropomi(filename):
 
     # Store methane, QA, lat, lon
     try:
-        tropomi_data = xr.open_dataset(filename, group="PRODUCT")
+        with xr.open_dataset(filename, group="PRODUCT") as _:
+            pass
     except Exception as e:
         print(f"Error opening {filename}: {e}")
         return None
 
-    dat["methane"] = tropomi_data["methane_mixing_ratio_bias_corrected"].values[0, :, :]
-    dat["qa_value"] = tropomi_data["qa_value"].values[0, :, :]
-    dat["longitude"] = tropomi_data["longitude"].values[0, :, :]
-    dat["latitude"] = tropomi_data["latitude"].values[0, :, :]
+    with xr.open_dataset(filename, group="PRODUCT") as tropomi_data:
+        dat["methane"] = tropomi_data["methane_mixing_ratio_bias_corrected"].values[0, :, :]
+        dat["qa_value"] = tropomi_data["qa_value"].values[0, :, :]
+        dat["longitude"] = tropomi_data["longitude"].values[0, :, :]
+        dat["latitude"] = tropomi_data["latitude"].values[0, :, :]
 
-    # Store UTC time
-    reference_time = tropomi_data["time"].values
-    delta_time = tropomi_data["delta_time"][0].values
-    strdate = []
-    if delta_time.dtype == "<m8[ns]":
-        strdate = reference_time + delta_time
-    elif delta_time.dtype == "<M8[ns]":
-        strdate = delta_time
-    else:
-        print(delta_time.dtype)
-        pass
-    dat["utctime"] = strdate
-
-    # Store time for whole orbit
-    times = np.zeros(shape=dat["longitude"].shape, dtype="datetime64[ns]")
-    for k in range(dat["longitude"].shape[0]):
-        times[k, :] = strdate[k]
-    dat["time"] = times
-    tropomi_data.close()
+        # Store UTC time
+        utc_str = tropomi_data["time_utc"].values[0,:]
+        utc_str = np.array([d.replace("Z","") for d in utc_str]).astype("datetime64[ns]")
+        dat["time"] = np.repeat(utc_str[:, np.newaxis], dat["methane"].shape[1], axis=1)
 
     # Store column averaging kernel, SWIR and NIR surface albedo
-    tropomi_data = xr.open_dataset(
-        filename, group="PRODUCT/SUPPORT_DATA/DETAILED_RESULTS"
-    )
-    dat["column_AK"] = tropomi_data["column_averaging_kernel"].values[0, :, :, ::-1]
-    dat["swir_albedo"] = tropomi_data["surface_albedo_SWIR"].values[0, :, :]
-    dat["nir_albedo"] = tropomi_data["surface_albedo_NIR"].values[0, :, :]
-    dat["blended_albedo"] = 2.4 * dat["nir_albedo"] - 1.13 * dat["swir_albedo"]
-    tropomi_data.close()
+    with xr.open_dataset(filename, group="PRODUCT/SUPPORT_DATA/DETAILED_RESULTS") as tropomi_data:
+        dat["column_AK"] = tropomi_data["column_averaging_kernel"].values[0, :, :, ::-1]
+        dat["swir_albedo"] = tropomi_data["surface_albedo_SWIR"].values[0, :, :]
+        dat["nir_albedo"] = tropomi_data["surface_albedo_NIR"].values[0, :, :]
+        dat["blended_albedo"] = 2.4 * dat["nir_albedo"] - 1.13 * dat["swir_albedo"]
 
     # Store methane prior profile, dry air subcolumns
-    tropomi_data = xr.open_dataset(
-        filename,
-        group="PRODUCT/SUPPORT_DATA/INPUT_DATA"
-    )
-    dat["methane_profile_apriori"] = tropomi_data["methane_profile_apriori"].values[
-        0, :, :, ::-1
-    ]  # mol m-2
-    dat["dry_air_subcolumns"] = tropomi_data["dry_air_subcolumns"].values[
-        0, :, :, ::-1
-    ]  # mol m-2
+    with xr.open_dataset(filename, group="PRODUCT/SUPPORT_DATA/INPUT_DATA") as tropomi_data: 
+        dat["methane_profile_apriori"] = tropomi_data["methane_profile_apriori"].values[
+            0, :, :, ::-1
+        ]  # mol m-2
+        dat["dry_air_subcolumns"] = tropomi_data["dry_air_subcolumns"].values[
+            0, :, :, ::-1
+        ]  # mol m-2
 
-    # Also get pressure interval and surface pressure for use below
-    pressure_interval = (
-        tropomi_data["pressure_interval"].values[0, :, :] / 100
-    )  # Pa -> hPa
-    surface_pressure = (
-        tropomi_data["surface_pressure"].values[0, :, :] / 100
-    )  # Pa -> hPa
-    tropomi_data.close()
+        # Also get pressure interval and surface pressure for use below
+        pressure_interval = (
+            tropomi_data["pressure_interval"].values[0, :, :] / 100
+        )  # Pa -> hPa
+        surface_pressure = (
+            tropomi_data["surface_pressure"].values[0, :, :] / 100
+        )  # Pa -> hPa
 
     # Store latitude and longitude bounds for pixels
-    tropomi_data = xr.open_dataset(
-        filename,
-        group="PRODUCT/SUPPORT_DATA/GEOLOCATIONS"
-    )
-    dat["longitude_bounds"] = tropomi_data["longitude_bounds"].values[0, :, :, :]
-    dat["latitude_bounds"] = tropomi_data["latitude_bounds"].values[0, :, :, :]
-    tropomi_data.close()
+    with xr.open_dataset(filename, group="PRODUCT/SUPPORT_DATA/GEOLOCATIONS") as tropomi_data:
+        dat["longitude_bounds"] = tropomi_data["longitude_bounds"].values[0, :, :, :]
+        dat["latitude_bounds"] = tropomi_data["latitude_bounds"].values[0, :, :, :]
 
     # Store vertical pressure profile
-    n1 = dat["methane"].shape[
-        0
-    ]  # length of along-track dimension (scanline) of retrieval field
-    n2 = dat["methane"].shape[
-        1
-    ]  # length of across-track dimension (ground_pixel) of retrieval field
-    pressures = np.zeros([n1, n2, 12 + 1], dtype=np.float32)
-    pressures.fill(np.nan)
+    n1 = dat["methane"].shape[0]  # length of along-track dimension (scanline) of retrieval field
+    n2 = dat["methane"].shape[1]  # length of across-track dimension (ground_pixel) of retrieval field
+    pressures = np.full([n1, n2, 12+1], np.nan, dtype=np.float32)
     for i in range(12 + 1):
         pressures[:, :, i] = surface_pressure - i * pressure_interval
     dat["pressures"] = pressures
+
+    return dat
+
+
+def read_blended(filename):
+    """
+    Read Blended TROPOMI+GOSAT data and save important variables to dictionary.
+    Arguments
+        filename [str]  : Blended TROPOMI+GOSAT netcdf data file to read
+    Returns
+        dat      [dict] : Dictionary of important variables from Blended TROPOMI+GOSAT:
+                            - CH4
+                            - Latitude
+                            - Longitude
+                            - Time (utc time reshaped for orbit)
+                            - Averaging kernel
+                            - SWIR albedo
+                            - NIR albedo
+                            - Blended albedo
+                            - CH4 prior profile
+                            - Dry air subcolumns
+                            - Latitude bounds
+                            - Longitude bounds
+                            - Surface classification
+                            - Chi-Square for SWIR
+                            - Vertical pressure profile
+    """
+
+    # Test to make sure the file can be opened
+    try:
+        with xr.open_dataset(filename) as _:
+            pass
+    except Exception as e:
+        print(f'Error opening {filename}: {e}')
+        return None
+
+    assert "BLND" in filename, "BLND not in filename, but a blended function is being used"
+
+    # Initialize dictionary for Blended TROPOMI+GOSAT data
+    dat = {}
+
+    # Extract data from netCDF file to our dictionary
+    with xr.open_dataset(filename) as blended_data:
+
+        dat["methane"] = blended_data["methane_mixing_ratio_blended"].values[:]
+        dat["longitude"] = blended_data["longitude"].values[:]
+        dat["latitude"] = blended_data["latitude"].values[:]
+        dat["column_AK"] = blended_data["column_averaging_kernel"].values[:, ::-1]
+        dat["swir_albedo"] = blended_data["surface_albedo_SWIR"][:]
+        dat["nir_albedo"] = blended_data["surface_albedo_NIR"].values[:]
+        dat["blended_albedo"] = 2.4 * dat["nir_albedo"] - 1.13 * dat["swir_albedo"]
+        dat["methane_profile_apriori"] = blended_data["methane_profile_apriori"].values[:, ::-1]
+        dat["dry_air_subcolumns"] = blended_data["dry_air_subcolumns"].values[:, ::-1]
+        dat["longitude_bounds"] = blended_data["longitude_bounds"].values[:]
+        dat["latitude_bounds"] = blended_data["latitude_bounds"].values[:]
+        dat["surface_classification"] = (blended_data["surface_classification"].values[:].astype("uint8") & 0x03).astype(int)
+        dat["chi_square_SWIR"] = blended_data["chi_square_SWIR"].values[:]
+
+        # Remove "Z" from time so that numpy doesn't throw a warning
+        utc_str = blended_data["time_utc"].values[:]
+        dat["time"] = np.array([d.replace("Z","") for d in utc_str]).astype("datetime64[ns]")
+
+        # Need to calculate the pressure for the 13 TROPOMI levels (12 layer edges)
+        pressure_interval = (blended_data["pressure_interval"].values[:] / 100)  # Pa -> hPa
+        surface_pressure = (blended_data["surface_pressure"].values[:] / 100)    # Pa -> hPa
+        n = len(dat["methane"])
+        pressures = np.full([n, 12 + 1], np.nan, dtype=np.float32)
+        for i in range(12 + 1):
+            pressures[:, i] = surface_pressure - i * pressure_interval
+        dat["pressures"] = pressures
+
+    # Add an axis here to mimic the (scanline, groundpixel) format of operational TROPOMI data
+    # This is so the blended data will be compatible with the TROPOMI operators
+    for key in dat.keys():
+        dat[key] = np.expand_dims(dat[key], axis=0)
 
     return dat
 
@@ -354,6 +410,31 @@ def filter_tropomi(tropomi_data, xlim, ylim, startdate, enddate):
         & (tropomi_data["qa_value"] >= 0.5)
         & (tropomi_data["swir_albedo"] > 0.05)
         & (tropomi_data["blended_albedo"] < 0.85)
+        & (tropomi_data["longitude_bounds"].ptp(axis=2) < 5)
+    )
+
+
+def filter_blended(blended_data, xlim, ylim, startdate, enddate):
+    """
+    Description:
+        Filter out any data that does not meet the following
+        criteria: We only consider data within lat/lon/time bounds,
+        that don't cross the antimeridian, and we filter out all
+        coastal pixels (surface classification 3) and inland water
+        pixels with a poor fit (surface classifcation 2, 
+        SWIR chi-2 > 20000) (recommendation from Balasus et al. 2023)
+    Returns:
+        numpy array with satellite indices for filtered tropomi data.
+    """
+    return np.where(
+        (blended_data["longitude"] > xlim[0])
+        & (blended_data["longitude"] < xlim[1])
+        & (blended_data["latitude"] > ylim[0])
+        & (blended_data["latitude"] < ylim[1])
+        & (blended_data["time"] >= startdate)
+        & (blended_data["time"] <= enddate)
+        & (blended_data["longitude_bounds"].ptp(axis=2) < 5)
+        & ~((blended_data["surface_classification"] == 3) | ((blended_data["surface_classification"] == 2) & (blended_data["chi_square_SWIR"][:] > 20000)))
     )
 
 
@@ -417,6 +498,8 @@ def average_tropomi_observations(TROPOMI, gc_lat_lon, sat_ind):
     gc_lats = gc_lat_lon["lat"]
     gc_lons = gc_lat_lon["lon"]
     gridcell_dicts = get_gridcell_list(gc_lons, gc_lats)
+    dlon_median = np.median(np.diff(gc_lons))
+    dlat_median = np.median(np.diff(gc_lats))
 
     for k in range(n_obs):
         iSat = sat_ind[0][k]  # lat index
@@ -429,8 +512,8 @@ def average_tropomi_observations(TROPOMI, gc_lat_lon, sat_ind):
         corners_lat_index = []
 
         for l in range(4):
-            iGC = nearest_loc(longitude_bounds[l], gc_lons)
-            jGC = nearest_loc(latitude_bounds[l], gc_lats)
+            iGC = nearest_loc(longitude_bounds[l], gc_lons, tolerance=max(dlon_median,0.5))
+            jGC = nearest_loc(latitude_bounds[l], gc_lats, tolerance=max(dlon_median,0.5))
             corners_lon_index.append(iGC)
             corners_lat_index.append(jGC)
 
@@ -496,7 +579,7 @@ def average_tropomi_observations(TROPOMI, gc_lat_lon, sat_ind):
                 gridcell_dict[
                     "time"
                 ].append(  # convert times to epoch time to make taking the mean easier
-                    int(pd.to_datetime(str(TROPOMI["utctime"][iSat])).strftime("%s"))
+                    int(pd.to_datetime(str(TROPOMI["time"][iSat, jSat])).strftime("%s"))
                 )
                 gridcell_dict["methane"].append(
                     TROPOMI["methane"][iSat, jSat]
