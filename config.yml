@@ -7,6 +7,7 @@ trversion: ['020400',]
 #trkind: ['RPRO']
 trkind: ['BLND']
 blended: True
-datadir: '/n/holyscratch01/jacob_lab/jeast/gc-OH-runs-2/tropomi_gridded'
-outfile: 'TROPOMI_GC_XCH4_L3_RPRO_020400_%Y%m%d.nc'
+datadir: '/n/holyscratch01/jacob_lab/jeast/gc-OH-runs-3/tropomi_gridded'
+outfile: 'TROPOMI_GC_XCH4_L3_BLND_020400_%Y%m%d.nc'
 pedge_cache: '/n/holyscratch01/jacob_lab/jeast/gc-OH-runs-2/gc_2x25_merra2_CH4_v05OH/OutputDir/'
+usecached: False

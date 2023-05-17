@@ -24,12 +24,19 @@ def main():
     datadir = str(cfg['datadir'])
     outfile = str(cfg['outfile'])
     pedge_cache = str(cfg['pedge_cache'])
+    blended = bool(cfg['blended'])
+    usecached = bool(cfg['usecached'])
     
     gc_startdate = pd.to_datetime(startdate,format='%Y%j')
     gc_enddate = pd.to_datetime(enddate,format='%Y%j')
     
     # save daily file
     for tdate in pd.date_range(gc_startdate,gc_enddate)[:-1]:
+        fname = tdate.strftime(f'{datadir}/{outfile}')
+        if usecached and os.path.isfile(fname):
+            print(f'\n\n----> SKIPPING {tdate.strftime("%Y-%m-%d")}, FILE EXISTS <----',flush=True)
+            continue
+
         print(f'\n\n----> Processing {tdate.strftime("%Y-%m-%d")} <----',flush=True)
         
         # get the lat/lons of gc gridcells
@@ -61,6 +68,7 @@ def main():
             print(f,flush=True)
             tf = tropomi.apply_average_tropomi_operator(
                 filename = f,
+                blended = blended,
                 n_elements = None,
                 gc_startdate = tdate,
                 gc_enddate = tdate + pd.Timedelta('1D'),
@@ -82,7 +90,7 @@ def main():
         
         # save
         dsout.to_netcdf(
-            tdate.strftime(f'{datadir}/{tdate.strftime(outfile)}'),
+            fname,
             encoding = {v:{'zlib':True,'complevel':1} for v in dsout.data_vars}
         )
         
