@@ -23,7 +23,7 @@ def main():
     trkind = cfg['trkind'] #list
     datadir = str(cfg['datadir'])
     outfile = str(cfg['outfile'])
-    pedge_cache = str(cfg['pedge_cache'])
+    pedge_cache = None
     blended = bool(cfg['blended'])
     usecached = bool(cfg['usecached'])
     
