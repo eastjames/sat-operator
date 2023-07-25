@@ -22,7 +22,7 @@ https://github.com/geoschem/integrated_methane_inversion/blob/main/src/inversion
 ## Usage
 1. Edit config.yml according to needs
 2. Optionally create your own batch submission to run on a compute node
-3. Run `./methanegridder.py` at the command line or in a batch job in an environment with required python libraries
+3. Run `./methanegridder.py YYYYMMDD YYYYMMDD` at the command line or in a batch job in an environment with required python libraries
 
 ## required python libraries
 * numpy
