@@ -744,7 +744,7 @@ def read_geoschem(date, gc_cache, pedge_cache=None):
     gc_data.close()
 
     # Read PEDGE from the LevelEdgeDiags collection
-    filename = f"{gc_cache}/{file_pedge}"
+    filename = f"{pedge_cache}/{file_pedge}"
     gc_data = xr.open_dataset(filename)
 
     # create pressure edges
