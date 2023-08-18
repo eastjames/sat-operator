@@ -18,8 +18,6 @@ def gridder(mydate):
     with open('config.yml', 'r') as file:
         cfg = yaml.safe_load(file)
     
-    #startdate = str(cfg['startdate'])
-    #enddate = str(cfg['enddate'])
     gc_cache = str(cfg['gc_cache'])
     tropomidir = str(cfg['tropomidir'])
     trversion = str(cfg['trversion'])
@@ -29,6 +27,12 @@ def gridder(mydate):
     pedge_cache = str(cfg['pedge_cache'])
     blended = bool(cfg['blended'])
     usecached = bool(cfg['usecached'])
+
+    # if grid_gc is false, we're just gridding TROPOMI
+    grid_gc = bool(cfg['grid_gc'])
+
+
+
     
     gc_startdate = mydate #pd.to_datetime(mydate, format='%Y%j')
     #gc_enddate = pd.to_datetime(enddate,format='%Y%j')
@@ -94,14 +98,15 @@ def gridder(mydate):
             xlim = np.array([-180,180]),
             ylim = np.array([-90,90]),
             gc_cache = gc_cache,
-            pedge_cache = pedge_cache
+            pedge_cache = pedge_cache,
+            grid_gc = grid_gc
         )
         tfs.append(tf)
         with open(f'logs/log.{mydate.strftime("%Y%m%d")}', 'a') as logf:
             print('\n', file=logf, flush=True)
         
     # convert to xarray dataset
-    dslist = [tropomi.accumulate_to_dataset(obs['obs_GC'],gc_lat_lon) for obs in tfs]
+    dslist = [tropomi.accumulate_to_dataset(obs['obs_GC'],gc_lat_lon,grid_gc) for obs in tfs]
     # strip Nones
     dslist = [ds for ds in dslist if ds is not None]
     
@@ -127,7 +132,7 @@ def main():
     alldates = pd.date_range(startdate, enddate)
 
     #with Pool(processes = os.cpu_count()) as pool:
-    with Pool(processes = 16) as pool:
+    with Pool(processes = 8) as pool:
         result = pool.map(gridder, alldates)
 
     print('-------> All done <-------', flush=True)

@@ -1,9 +1,11 @@
-gc_cache: '/n/holyscratch01/jacob_lab/jeast/proj/seasonality/runs/S25/OutputDir/'
+gc_cache: /n/holylfs05/LABS/jacob_lab/jeast/proj/seasonality/runs/S2/OutputDir
 tropomidir:  '/n/holylfs05/LABS/jacob_lab/imi/ch4/blended/'
 trversion: ['020400',]
 trkind: ['BLND']
 blended: True
-datadir: '/n/holylfs05/LABS/jacob_lab/jeast/proj/seasonality/post/tropomi_gridded/S25'
+datadir: '/n/home06/jeast/sat-operator/data'
 outfile: 'TROPOMI_GC_XCH4_L3_BLND_020400_%Y%m%d.nc'
 pedge_cache: None
 usecached: False
+grid_gc: False
+

@@ -22,8 +22,9 @@ def apply_average_tropomi_operator(
     xlim,
     ylim,
     gc_cache,
+    grid_gc,
     pedge_cache = None,
-    tunits_out = 'hours since 2019-01-01'
+    tunits_out = 'hours since 2018-01-01'
 ):
     """
     Apply the averaging tropomi operator to map GEOS-Chem methane data to TROPOMI observation space.
@@ -37,6 +38,7 @@ def apply_average_tropomi_operator(
         xlim           [float]      : Longitude bounds for simulation domain
         ylim           [float]      : Latitude bounds for simulation domain
         gc_cache       [str]        : Path to GEOS-Chem output data
+        grid_gc        [bool]       : whether to grid GEOS-Chem
         tunits_out     [str]        : cftime-compatible datetime units
 
     Returns
@@ -80,7 +82,8 @@ def apply_average_tropomi_operator(
     all_strdate = list(set(all_strdate))
 
     # Read GEOS_Chem data for the dates of interest
-    all_date_gc = read_all_geoschem(all_strdate, gc_cache, pedge_cache)
+    if grid_gc:
+        all_date_gc = read_all_geoschem(all_strdate, gc_cache, pedge_cache)
 
     # Initialize array with n_gridcells rows and 6 columns. Columns are TROPOMI CH4, GEOSChem CH4, longitude, latitude, observation counts
     obs_GC = np.zeros([n_gridcells, 9], dtype=np.float32)
@@ -89,38 +92,46 @@ def apply_average_tropomi_operator(
     # For each gridcell dict with tropomi obs:
     for i, gridcell_dict in enumerate(obs_mapped_to_gc):
 
-        # Get GEOS-Chem data for the date of the observation:
-        p_sat = gridcell_dict["p_sat"]
-        dry_air_subcolumns = gridcell_dict["dry_air_subcolumns"]  # mol m-2
-        apriori = gridcell_dict["apriori"]  # mol m-2
-        avkern = gridcell_dict["avkern"]
-        strdate = gridcell_dict["time"]
-        GEOSCHEM = all_date_gc[strdate]
+        if grid_gc:
 
-        # Get GEOS-Chem pressure edges for the cell
-        p_gc = GEOSCHEM["PEDGE"][gridcell_dict["iGC"], gridcell_dict["jGC"], :]
-        # Get GEOS-Chem methane for the cell
-        gc_CH4 = GEOSCHEM["CH4"][gridcell_dict["iGC"], gridcell_dict["jGC"], :]
-        # Get merged GEOS-Chem/TROPOMI pressure grid for the cell
-        merged = merge_pressure_grids(p_sat, p_gc)
-        # Remap GEOS-Chem methane to TROPOMI pressure levels
-        sat_CH4 = remap(
-            gc_CH4,
-            merged["data_type"],
-            merged["p_merge"],
-            merged["edge_index"],
-            merged["first_gc_edge"],
-        )  # ppb
-        # Convert ppb to mol m-2
-        sat_CH4_molm2 = sat_CH4 * 1e-9 * dry_air_subcolumns  # mol m-2
-        # Derive the column-averaged XCH4 that TROPOMI would see over this ground cell
-        # using eq. 46 from TROPOMI Methane ATBD, Hasekamp et al. 2019
-        virtual_tropomi = (
-            sum(apriori + avkern * (sat_CH4_molm2 - apriori))
-            / sum(dry_air_subcolumns)
-            * 1e9
-        )  # ppb
-        
+            # Get GEOS-Chem data for the date of the observation:
+            p_sat = gridcell_dict["p_sat"]
+            dry_air_subcolumns = gridcell_dict["dry_air_subcolumns"]  # mol m-2
+            apriori = gridcell_dict["apriori"]  # mol m-2
+            avkern = gridcell_dict["avkern"]
+            strdate = gridcell_dict["time"]
+            GEOSCHEM = all_date_gc[strdate]
+
+            # Get GEOS-Chem pressure edges for the cell
+            p_gc = GEOSCHEM["PEDGE"][gridcell_dict["iGC"], gridcell_dict["jGC"], :]
+            # Get GEOS-Chem methane for the cell
+            gc_CH4 = GEOSCHEM["CH4"][gridcell_dict["iGC"], gridcell_dict["jGC"], :]
+            # Get merged GEOS-Chem/TROPOMI pressure grid for the cell
+            merged = merge_pressure_grids(p_sat, p_gc)
+            # Remap GEOS-Chem methane to TROPOMI pressure levels
+            sat_CH4 = remap(
+                gc_CH4,
+                merged["data_type"],
+                merged["p_merge"],
+                merged["edge_index"],
+                merged["first_gc_edge"],
+            )  # ppb
+            # Convert ppb to mol m-2
+            sat_CH4_molm2 = sat_CH4 * 1e-9 * dry_air_subcolumns  # mol m-2
+            # Derive the column-averaged XCH4 that TROPOMI would see over this ground cell
+            # using eq. 46 from TROPOMI Methane ATBD, Hasekamp et al. 2019
+            virtual_tropomi = (
+                sum(apriori + avkern * (sat_CH4_molm2 - apriori))
+                / sum(dry_air_subcolumns)
+                * 1e9
+            )  # ppb
+            
+
+        else:
+            # just fill GC with nans
+            virtual_tropomi = np.full(gridcell_dict['methane'].shape, np.nan)
+
+            
         # time index
         dt = pd.to_datetime(gridcell_dict['time'],format='%Y%m%d_%H')
         tidx = cftime.date2num(dt, tunits_out)
@@ -152,9 +163,9 @@ def accumulate_to_dataset(
     #gc_enddate,
     gc_lat_lon,
     #gc_cache,
-    tunits_in = 'hours since 2019-01-01',
+    grid_gc,
+    tunits_in = 'hours since 2018-01-01',
     #nominal_date = '2019-01-01'
-    
 ):
     '''
     take output from averaging operator and 
@@ -185,12 +196,21 @@ def accumulate_to_dataset(
     emptysurface = np.full((tshape,jshape,ishape),np.nan)
     
     # dataset
+    if grid_gc:
+        outvars = ['tropomi_methane', 'geoschem_methane', 'observation_count'] 
+    else:
+        outvars = ['tropomi_methane', 'observation_count'] 
+    
     outds = xr.Dataset(
-        data_vars = dict(
-            tropomi_methane=(dimlist, emptysurface.copy()),
-            geoschem_methane=(dimlist, emptysurface.copy()),
-            observation_count=(dimlist, emptysurface.copy())
-        ),
+        #data_vars = data_vars,
+        data_vars = {
+            v: (dimlist, emptysurface.copy()) for v in outvars
+        },
+        #data_vars = dict(
+        #    tropomi_methane=(dimlist, emptysurface.copy()),
+        #    geoschem_methane=(dimlist, emptysurface.copy()),
+        #    observation_count=(dimlist, emptysurface.copy())
+        #),
         coords = {
             **gc_lat_lon,
             'time':tcoords
@@ -207,11 +227,12 @@ def accumulate_to_dataset(
         obs[:,5].astype(int) # lon
     ] = obs[:,0]
     
-    outds['geoschem_methane'].values[
-        tidx, # time
-        obs[:,6].astype(int), #lat
-        obs[:,5].astype(int) #lon
-    ] = obs[:,1]
+    if grid_gc:
+        outds['geoschem_methane'].values[
+            tidx, # time
+            obs[:,6].astype(int), #lat
+            obs[:,5].astype(int) #lon
+        ] = obs[:,1]
     
     outds['observation_count'].values[
         tidx, # time
@@ -219,7 +240,8 @@ def accumulate_to_dataset(
         obs[:,5].astype(int) # lon
     ] = obs[:,4]
     
-    for v in ['tropomi_methane','geoschem_methane']:
+    #for v in ['tropomi_methane','geoschem_methane']:
+    for v in [outv for outv in outvars if outv != 'observation_count']:
         outds[v].attrs['units'] = 'ppb'
         outds[v].attrs['long_name'] = 'dry column average CH4'
     
@@ -455,7 +477,12 @@ def get_gc_lat_lon(gc_cache, start_date):
     date = pd.to_datetime(start_date).strftime("%Y%m%d")
     file_species = f"GEOSChem.SpeciesConc.{date}_0000z.nc4"
     filename = f"{gc_cache}/{file_species}"
-    gc_data = xr.open_dataset(filename)
+    try:
+        gc_data = xr.open_dataset(filename)
+    except FileNotFoundError:
+        from glob import glob
+        new_filename = sorted(glob(f'{gc_cache}/GEOSChem.SpeciesConc.????????_0000z.nc4'))[0]
+        gc_data = xr.open_dataset(new_filename)
     gc_ll["lon"] = gc_data["lon"].values
     gc_ll["lat"] = gc_data["lat"].values
 
